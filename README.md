@@ -1,6 +1,6 @@
 # Criação da infraestrutura básica
 
-## Exportado varáveis de ambiente
+## Exportando varáveis de ambiente
 
 ```
 export DEMO_BUCKET_CONFIG=demo-aws-config-items-recorded
