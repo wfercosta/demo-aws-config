@@ -4,7 +4,7 @@
 
 ```
 export DEMO_BUCKET_CONFIG=demo-aws-config-items-recorded
-export DEMO_SUBSCRIPTION_EMAIL=wander@wfercosta.com
+export DEMO_SUBSCRIPTION_EMAIL=<email>
 ```
 
 ## Provisionando configuração de VPC e Subnets
