@@ -65,6 +65,8 @@ aws cloudformation create-stack \
 
 # Cleanup
 
+## Remoção das stacks criadas
+
 ```
 aws cloudformation delete-stack \
  --stack-name demo-config-postmortem
@@ -81,6 +83,8 @@ aws cloudformation delete-stack \
 aws cloudformation delete-stack \
  --stack-name demo-config-res-network
 ```
+
+## Remoção do bucket com policy 'Retain'
 
 ```
 aws s3 rm s3://${DEMO_BUCKET_CONFIG} --recursive
