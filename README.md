@@ -36,7 +36,7 @@ aws cloudformation create-stack \
 ```
 aws cloudformation update-stack \
  --stack-name demo-config-res-example-s3 \
- --template-body file://03-1_s3_encryption_disabled.yaml
+ --template-body file://03-1_s3_encryption_enabled.yaml
 ```
 
 ```
