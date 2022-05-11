@@ -63,6 +63,11 @@ aws cloudformation create-stack \
  --capabilities CAPABILITY_NAMED_IAM
 ```
 
+```
+aws cloudformation delete-stack \
+ --stack-name demo-config-postmortem
+```
+
 # Cleanup
 
 ## Remoção das stacks criadas
