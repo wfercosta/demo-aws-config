@@ -4,7 +4,7 @@
 
 ```
 export DEMO_BUCKET_CONFIG=demo-aws-config-items-recorded
-export DEMO_SUBSCRIPTION_EMAIL=<email>
+export DEMO_SUBSCRIPTION_EMAIL=wander@wfercosta.com
 ```
 
 ## Provisionando configuração de VPC e Subnets
@@ -44,7 +44,7 @@ aws cloudformation delete-stack \
  --stack-name demo-config-res-example-s3
 ```
 
-## Lab - EC2 Innstance com volumes EBS encrypted e non encrypted
+## Lab - EC2 Instance com volumes EBS encrypted e non encrypted
 
 ```
 aws cloudformation create-stack \
