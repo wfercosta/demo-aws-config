@@ -25,7 +25,7 @@ Resources:
           - ","
           - Fn::ImportValue: !Join
               - ""
-              - - !FindInMap [Stacks, References, Netowrk]
+              - - !FindInMap [Stacks, References, Network]
                 - ":Network:SubnetIds"
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
