@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Basic infrastructure for AWS Config demonstration
+
+Mappings:
+  Cidr:
+    Vpc:
+      Value: "172.16.0.0/16"
+    Subnets:
+      Values:
+        - "172.16.0.0/24"
+        - "172.16.1.0/24"
+
+Resources:
+  ParameterStackName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /demo/stacks/core/name
+      Type: String
+      Value: AWS::StackName
+      Description: SSM Parameter for this stack name
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-vpc
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !FindInMap
+        - Cidr
+        - Vpc
+        - Value
+
+  Subnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-subnet-1
+      VpcId: !Ref Vpc
+      CidrBlock: !Select
+        - 0
+        - !FindInMap
+          - Cidr
+          - Subnets
+          - Values
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs
+          Ref: AWS::Region
+
+  Subnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-subnet-2
+      VpcId: !Ref Vpc
+      CidrBlock: !Select
+        - 1
+        - !FindInMap
+          - Cidr
+          - Subnets
+          - Values
+      AvailabilityZone: !Select
+        - 1
+        - !GetAZs
+          Ref: AWS::Region
+
+Outputs:
+  VpcId:
+    Description: The ID of the VPC created for Demo AWS Config
+    Value: !Ref Vpc
+    Export:
+      Name: !Sub Demo:Network:VpcId
+  SubnetIds:
+    Description: The ID of Subnets created for Demo AWS Config
+    Value: !Join
+      - ","
+      - - !Ref Subnet1
+        - !Ref Subnet2
+    Export:
+      Name: !Sub Demo:Network:SubnetIds

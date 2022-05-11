@@ -1,0 +1,113 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Basic infrastructure for AWS Config demonstration
+
+Mappings:
+  ECS:
+    Container:
+      Name: simplehttp
+      Image: gkoenig/simplehttp
+      Port: 8000
+  Stacks:
+    References:
+      Network: Demo
+
+Resources:
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Join ["", [!FindInMap [ECS, Container, Name], Cluster]]
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: LogGroup
+    Properties:
+      Family: !Join ["", [!FindInMap [ECS, Container, Name], TaskDefinition]]
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: 256
+      Memory: 0.5GB
+      ExecutionRoleArn: !Ref ExecutionRole
+      TaskRoleArn: !Ref TaskRole
+      ContainerDefinitions:
+        - Name: !FindInMap [ECS, Container, Name]
+          Image: !FindInMap [ECS, Container, Image]
+          PortMappings:
+            - ContainerPort: !FindInMap [ECS, Container, Port]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref LogGroup
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command: ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ["", [!FindInMap [ECS, Container, Name], ExecutionRole]]
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ["", [!FindInMap [ECS, Container, Name], TaskRole]]
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: "sts:AssumeRole"
+
+  ContainerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription:
+        !Join ["", [!FindInMap [ECS, Container, Name], ContainerSecurityGroup]]
+      VpcId: !ImportValue
+        Fn::Join:
+          - ""
+          - - !FindInMap [Stacks, References, Network]
+            - ":Network:VpcId"
+
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !FindInMap [ECS, Container, Port]
+          ToPort: !FindInMap [ECS, Container, Port]
+          CidrIp: 0.0.0.0/0
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !FindInMap [ECS, Container, Name]
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Split
+            - ","
+            - Fn::ImportValue: !Join
+                - ""
+                - - !FindInMap [Stacks, References, Network]
+                  - ":Network:SubnetIds"
+          SecurityGroups:
+            - !Ref ContainerSecurityGroup
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        !Join ["", [/ecs/, !FindInMap [ECS, Container, Name], TaskDefinition]]

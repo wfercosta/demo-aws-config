@@ -1,0 +1,341 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Basic infrastructure for AWS Config demonstration
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Delivery Notifications
+        Parameters:
+          - NotificationEmail
+
+Parameters:
+  NotificationEmail:
+    Type: String
+    Description: Email to receive notifications from AWS Config
+    Default: wanderfernando@gmail.com
+
+Mappings:
+  Lambda:
+    Name:
+      Value: demo-aws-config-stop-non-compliant-ec2-ebs
+
+Resources:
+  ParameterStackName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /demo/stacks/res-aws-config/name
+      Type: String
+      Value: AWS::StackName
+      Description: SSM Parameter for this stack name
+
+  ConfigBucket:
+    DeletionPolicy: Retain
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: demo-aws-config-items-recorded
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  ConfigBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ConfigBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - config.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource:
+              - !Sub "arn:${AWS::Partition}:s3:::${ConfigBucket}"
+          - Effect: Allow
+            Principal:
+              Service:
+                - config.amazonaws.com
+            Action: s3:PutObject
+            Resource:
+              - !Sub "arn:${AWS::Partition}:s3:::${ConfigBucket}/AWSLogs/${AWS::AccountId}/*"
+          - Action:
+              - s3:*
+            Effect: Deny
+            Resource:
+              - !Sub "arn:${AWS::Partition}:s3:::${ConfigBucket}"
+              - !Sub "arn:${AWS::Partition}:s3:::${ConfigBucket}/*"
+            Principal: "*"
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  ConfigTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-topic
+      DisplayName: AWS Config Notificationn Topic
+      KmsMasterKeyId: !Ref KMSAlias
+
+  ConfigTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref ConfigTopic
+      PolicyDocument:
+        Statement:
+          - Action:
+              - sns:Publish
+            Effect: Allow
+            Resource: !Ref ConfigTopic
+            Principal:
+              Service:
+                - events.amazonaws.com
+
+  ConfigTopicEventBridgeDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: event-rule-config-to-sns-dlq
+
+  ConfigTopicEventBridgeDLQPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ConfigTopicEventBridgeDLQ
+      PolicyDocument:
+        Statement:
+          - Action:
+              - SQS:SendMessage
+            Effect: "Allow"
+            Resource: !GetAtt ConfigTopicEventBridgeDLQ.Arn
+            Principal:
+              Service:
+                - events.amazonaws.com
+
+  ConfigTopicEventBridge:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: event-rule-config-to-sns
+      Description: Event rule for Config to SNS
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.config
+        detail-type:
+          - "Config Rules Compliance Change"
+        detail:
+          messageType:
+            - ComplianceChangeNotification
+          configRuleName:
+            - rule-ebs-encrypted-volumes
+          resourceType:
+            - AWS::EC2::Volume
+          newEvaluationResult:
+            complianceType:
+              - NON_COMPLIANT
+      Targets:
+        - Arn: !Ref ConfigTopic
+          Id: ConfigTopic
+          DeadLetterConfig:
+            Arn: !GetAtt ConfigTopicEventBridgeDLQ.Arn
+        - Arn: !GetAtt ConfigTopicEventBridgeLogGroup.Arn
+          Id: LogGroup
+
+  ConfigTopicEventBridgeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/events/event-rule-config-to-sns
+      RetentionInDays: 1
+
+  ConfigTopicSubscriptionEmail:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !Ref NotificationEmail
+      Protocol: email
+      TopicArn: !Ref ConfigTopic
+
+  ConfigRecorderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - config.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWS_ConfigRole"
+
+  ConfigRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    DependsOn:
+      - ConfigBucketPolicy
+    Properties:
+      RoleARN: !GetAtt ConfigRecorderRole.Arn
+      RecordingGroup:
+        AllSupported: true
+        IncludeGlobalResourceTypes: false
+
+  ConfigDeliveryChannels:
+    Type: AWS::Config::DeliveryChannel
+    DependsOn:
+      - ConfigBucketPolicy
+    Properties:
+      Name: aws-config-demo-delivery-channel
+      ConfigSnapshotDeliveryProperties:
+        DeliveryFrequency: One_Hour
+      S3BucketName: !Ref ConfigBucket
+
+  LambdaStopEC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ["-", [!FindInMap [Lambda, Name, Value], role]]
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      Path: /
+      Policies:
+        - PolicyName:
+            !Join ["-", [!FindInMap [Lambda, Name, Value], policy, log]]
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:*
+                Resource: arn:aws:logs:*:*:*
+        - PolicyName:
+            !Join ["-", [!FindInMap [Lambda, Name, Value], policy, ec2]]
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:*
+                Resource: "*"
+
+  LambdaStopEC2:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !FindInMap [Lambda, Name, Value]
+      Code:
+        ZipFile: !Sub |
+          import boto3
+          import json
+          region = '${AWS::Region}'
+
+          def handler(event, context):
+              ec2 = boto3.client('ec2', region_name=region)
+              
+              message = json.loads(event['Records'][0]['Sns']['Message'])
+              
+              res_type = message['detail']['resourceType']
+              res_id = message['detail']['resourceId']
+              res_status = message['detail']['newEvaluationResult']['complianceType']  
+
+              describe = ec2.describe_volumes(VolumeIds=[res_id])
+
+              instance_id = describe['Volumes'][0]['Attachments'][0]['InstanceId']
+
+              print(f'Resource with ID {res_id} of type {res_type} is with status {res_status} attached to {instance_id}')
+
+      Handler: index.handler
+      Role: !GetAtt LambdaStopEC2Role.Arn
+      Runtime: python3.6
+      Timeout: 60
+
+  LambdaStopEC2LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ["", [/aws/lambda/, !FindInMap [Lambda, Name, Value]]]
+      RetentionInDays: 1
+
+  LambdaStopEC2PermissionSNS:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !Ref LambdaStopEC2
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref ConfigTopic
+
+  LambdaStopEC2ConfigTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !GetAtt LambdaStopEC2.Arn
+      Protocol: lambda
+      TopicArn: !Ref ConfigTopic
+
+  ConfigRuleEBSEncryptedVolumes:
+    Type: AWS::Config::ConfigRule
+    DependsOn:
+      - ConfigRecorder
+    Properties:
+      ConfigRuleName: rule-ebs-encrypted-volumes
+      Description: Checks whether EBS volumes that are in an attached state are encrypted.
+      Source:
+        Owner: AWS
+        SourceIdentifier: ENCRYPTED_VOLUMES
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::Volume
+
+  ConfigRuleS3ServerSideEncryptionEnabled:
+    Type: AWS::Config::ConfigRule
+    DependsOn:
+      - ConfigRecorder
+    Properties:
+      ConfigRuleName: rule-s3-server-side-encryption-enabled
+      Description: Checks whether S3 buckets are encrypted.
+      Source:
+        Owner: AWS
+        SourceIdentifier: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::S3::Bucket
+
+  ConfigRuleS3PublicReadProhibited:
+    Type: AWS::Config::ConfigRule
+    DependsOn:
+      - ConfigRecorder
+    Properties:
+      ConfigRuleName: rule-s3-public-read-prohibited
+      Description: Checks whether S3 buckets are with public read prohibited.
+      Source:
+        Owner: AWS
+        SourceIdentifier: S3_BUCKET_PUBLIC_READ_PROHIBITED
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::S3::Bucket
+
+  KMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      EnableKeyRotation: false
+      Description: Key used for encrypt messages SQS
+      KeyPolicy:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+              Service: events.amazonaws.com
+            Action:
+              - "kms:*"
+            Resource: "*"
+
+  KMSAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/demo-aws-config
+      TargetKeyId: !Ref KMSKey

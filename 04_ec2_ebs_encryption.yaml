@@ -1,0 +1,36 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Basic infrastructure for AWS Config demonstration
+
+Mappings:
+  EC2:
+    Instance:
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+      Type: t2.micro
+  Stacks:
+    References:
+      Network: Demo
+
+Resources:
+  Machine:
+    Type: AWS::EC2::Instance
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-machine-ebs
+      ImageId: !FindInMap [EC2, Instance, ImageId]
+      InstanceType: !FindInMap [EC2, Instance, Type]
+      SubnetId: !Select
+        - 0
+        - !Split
+          - ","
+          - Fn::ImportValue: !Join
+              - ""
+              - - !FindInMap [Stacks, References, Netowrk]
+                - ":Network:SubnetIds"
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeType: gp2
+            VolumeSize: 20
